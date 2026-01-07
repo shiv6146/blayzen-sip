@@ -58,7 +58,7 @@ jobs:
         DATABASE_URL: postgres://postgres:postgres@localhost:5432/blayzen_sip_test?sslmode=disable
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v5
       with:
         file: ./coverage.out
         fail_ci_if_error: false
