@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: blayzen_sip_test
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: 1.24.x
+
+    - name: Wait for PostgreSQL
+      run: |
+        until pg_isready -h localhost -p 5432; do
+          echo "Waiting for PostgreSQL..."
+          sleep 2
+        done
+        echo "PostgreSQL is ready"
+
+    - name: Run tests
+      run: make test
+      env:
+        DATABASE_URL: postgres://postgres:postgres@localhost:5432/blayzen_sip_test?sslmode=disable
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Check Docker Hub credentials
+      id: docker-creds
+      run: |
+        if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+          echo "available=true" >> $GITHUB_OUTPUT
+        else
+          echo "available=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Log in to Docker Hub
+      if: steps.docker-creds.outputs.available == 'true'
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Extract metadata
+      if: steps.docker-creds.outputs.available == 'true'
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ secrets.DOCKERHUB_USERNAME }}/blayzen-sip
+        tags: |
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      if: steps.docker-creds.outputs.available == 'true'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Build Docker image (without push)
+      if: steps.docker-creds.outputs.available == 'false'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        tags: blayzen-sip:${{ github.ref_name }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Get the latest tag
+        LATEST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        if [ -z "$LATEST_TAG" ]; then
+          # First release
+          cat << 'CHANGELOG' > /tmp/body.txt
+        ## Initial Release
+
+        This is the first release of Blayzen SIP Server.
+
+        ### Features
+        - SIP server for voice agent routing
+        - REST API for configuration management
+        - WebSocket transport integration
+        - PostgreSQL backend with caching
+        - Docker containerization
+        - Comprehensive API documentation
+        CHANGELOG
+          BODY=$(cat /tmp/body.txt)
+        else
+          # Get commits since last tag
+          BODY=$(git log --pretty=format:"- %s (%h)" "$LATEST_TAG"..HEAD | head -20)
+          if [ -z "$BODY" ]; then
+            BODY="No changes since last release."
+          fi
+          BODY="## Changes since $LATEST_TAG"$'\n\n'"$BODY"
+        fi
+        echo "body<<EOF" >> $GITHUB_OUTPUT
+        echo "$BODY" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Build binary for release
+      run: make build
+
+    - name: Create release archives
+      run: |
+        mkdir -p bin
+        cd bin
+        if [ -f blayzen-sip ]; then
+          tar -czf blayzen-sip-linux-amd64.tar.gz blayzen-sip
+          ls -la *.tar.gz
+        else
+          echo "Warning: Binary not found, skipping archive creation"
+        fi
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.ref_name }}
+        name: Release ${{ github.ref_name }}
+        body: ${{ steps.changelog.outputs.body }}
+        draft: false
+        prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+        files: |
+          bin/*.tar.gz
+          docs/**/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
