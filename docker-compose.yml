@@ -1,0 +1,108 @@
+services:
+  # ==========================================================================
+  # blayzen-sip - Main application
+  # ==========================================================================
+  blayzen-sip:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: blayzen-sip
+    restart: unless-stopped
+    ports:
+      # SIP
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+      # REST API
+      - "8080:8080"
+      # RTP (for direct host networking, use network_mode: host instead)
+      - "10000-10100:10000-10100/udp"
+    environment:
+      # SIP Configuration
+      SIP_HOST: 0.0.0.0
+      SIP_PORT: 5060
+      SIP_TRANSPORT: udp
+      RTP_PORT_MIN: 10000
+      RTP_PORT_MAX: 10100
+
+      # REST API Configuration
+      API_HOST: 0.0.0.0
+      API_PORT: 8080
+      GIN_MODE: release
+
+      # Database
+      DATABASE_URL: postgres://blayzen:blayzen@postgres:5432/blayzen_sip?sslmode=disable
+
+      # Cache
+      VALKEY_URL: valkey:6379
+      VALKEY_PASSWORD: ""
+      VALKEY_DB: 0
+
+      # Default agent (for testing - connect to host machine)
+      DEFAULT_WEBSOCKET_URL: ws://host.docker.internal:8081/ws
+
+      # Logging
+      LOG_LEVEL: info
+
+      # Security
+      API_AUTH_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    networks:
+      - blayzen-net
+    # Uncomment for host networking (required for RTP in production)
+    # network_mode: host
+
+  # ==========================================================================
+  # PostgreSQL Database
+  # ==========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: blayzen-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: blayzen
+      POSTGRES_PASSWORD: blayzen
+      POSTGRES_DB: blayzen_sip
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blayzen -d blayzen_sip"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - blayzen-net
+
+  # ==========================================================================
+  # Valkey (Redis-compatible cache)
+  # ==========================================================================
+  valkey:
+    image: valkey/valkey:7.2-alpine
+    container_name: blayzen-valkey
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - blayzen-net
+
+networks:
+  blayzen-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  valkey_data:
+

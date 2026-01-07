@@ -1,0 +1,53 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Build
+build/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Test
+coverage.out
+coverage.html
+
+# Vendor (optional)
+vendor/
+
+# Air (hot reload)
+tmp/
+
+# Swagger generated docs (regenerate with `make swagger`)
+# Uncomment if you want to commit generated docs
+# docs/docs.go
+# docs/swagger.json
+# docs/swagger.yaml
+
+# Docker volumes (local)
+postgres_data/
+valkey_data/
+
